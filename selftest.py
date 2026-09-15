@@ -117,6 +117,7 @@ def main() -> int:
     cfg_b.update({"project_root": str(dst), "export_dir": str(tmp / "outbox_b"),
                   "import_dir": str(inbox), "max_batch_kb": 45,
                   "state_file": str(tmp / "state_b.json")})
+    cfg_b["import"]["backup"] = True  # старый конфиг не должен возвращать создание бэкапов
 
     # ---------------------------------------------------------- 1. полный экспорт
     print("[1] полный экспорт")
@@ -200,7 +201,8 @@ def main() -> int:
     check(read(dst, "docs/README.md") == "# Проект v2\n", "второй изменённый файл обновлён")
     check((dst / "src/new_feature.py").exists(), "новый файл создан")
     check(not (dst / "src/deep/a/b/c/d/deep.py").exists(), "удалённый файл удалён")
-    check((dst / ".codeshuttle_backup").exists(), "бэкап перезаписанных файлов создан")
+    check(not (dst / ".codeshuttle_backup").exists(),
+          "импорт не создаёт каталог резервных копий")
 
     a_files, b_files = snapshot(src, cfg_a), snapshot(dst, cfg_b)
     check(a_files == b_files, "после дельты деревья снова идентичны")

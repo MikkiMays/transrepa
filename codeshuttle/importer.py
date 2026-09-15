@@ -4,9 +4,9 @@
 с тем, что реально лежит на диске.
 
   файла нет            -> создать
-  есть, sha разошлись  -> обновить (старую версию в бэкап)
+  есть, sha разошлись  -> обновить
   есть, sha совпали    -> не трогать вообще
-  DELETE в дельте      -> удалить (в бэкап)
+  DELETE в дельте      -> удалить
 
 Повторное применение тех же батчей ничего не меняет — операция идемпотентна.
 """
@@ -20,7 +20,7 @@ from . import config as cfgmod
 from . import packfmt
 from .scanner import scan_project
 from .state import State, state_hash
-from .util import Log, human_size, is_safe_relpath, now_stamp, sha256_text
+from .util import Log, human_size, is_safe_relpath, sha256_text
 
 READABLE_SUFFIXES = (".txt", ".md", ".batch", ".log", ".text", ".dat", "")
 
@@ -59,7 +59,6 @@ class ImportResult:
     packs: list[str] = field(default_factory=list)
     incomplete_packs: list[str] = field(default_factory=list)
     message: str = ""
-    backup_dir: Path | None = None
 
     @property
     def written(self) -> list[str]:
@@ -226,17 +225,7 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
 
     st = State.load(cfgmod.state_file_for(cfg), str(root))
     result = ImportResult(ok=True)
-    backup_root: Path | None = None
-    if imp_cfg.get("backup", True) and not dry_run:
-        backup_root = root / ".codeshuttle_backup" / now_stamp()
-
     written_by: dict[str, str] = {}   # файл -> пак, который его уже записал в этом прогоне
-
-    def backup(target: Path, rel: str) -> None:
-        if backup_root and target.exists():
-            dst = backup_root / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, dst)
 
     for plan in plans:
         log(f"\n-- пак {plan.pack_id} [{plan.kind}]: батчей {len(plan.batches)}/{plan.total}, "
@@ -274,7 +263,6 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
                     result.unchanged.append(rel)
                     written_by[rel] = plan.pack_id
                     continue
-                backup(target, rel)
                 if not dry_run:
                     target.write_text(new_text, encoding="utf-8", newline="\n")
                 else:
@@ -297,7 +285,6 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
                     target = root / rel
                     if not target.exists():
                         continue
-                    backup(target, rel)
                     if not dry_run:
                         target.unlink()
                     else:
@@ -310,7 +297,6 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
                 if f.rel in known:
                     continue
                 target = root / f.rel
-                backup(target, f.rel)
                 if not dry_run and target.exists():
                     target.unlink()
                 result.deleted.append(f.rel)
@@ -341,10 +327,6 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
     if dry_run:
         result.message = "проверка завершена, ничего не записано"
         return result
-
-    if backup_root and backup_root.exists():
-        log(f"Бэкап старых версий  : {backup_root}")
-        result.backup_dir = backup_root
 
     # пересобираем состояние: приёмник теперь сам может слать дельты обратно
     scan = scan_project(cfg_view, Log(lambda _m: None))

@@ -281,7 +281,6 @@
     "extra_patterns": []
   },
   "import": {
-    "backup": true,
     "apply_deletes": true,
     "move_applied": true,
     "prune_extra_on_full": false,

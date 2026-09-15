@@ -88,7 +88,6 @@ DEFAULTS: dict[str, Any] = {
     },
 
     "import": {
-        "backup": True,          # бэкап перезаписываемых/удаляемых файлов
         "apply_deletes": True,   # применять DELETE-блоки из дельты
         "move_applied": True,    # переносить применённые батчи в import_dir/_applied/<pack>
         "prune_extra_on_full": False,  # при full-паке удалять локальные файлы, которых нет в паке
