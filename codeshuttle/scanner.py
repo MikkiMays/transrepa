@@ -1,4 +1,4 @@
-"""Обход проекта: отбор файлов кода, чтение, санитайзинг."""
+"""Обход проекта: отбор и чтение файлов без изменения содержимого."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
-from . import redactor
 from .util import Log, decode_source, sha256_text, utf8_len
 
 BATCH_SIGNATURE = "### CODESHUTTLE"
@@ -18,14 +17,12 @@ class CodeFile:
     text: str
     sha: str
     size: int
-    redactions: list[redactor.Finding] = field(default_factory=list)
 
 
 @dataclass
 class ScanResult:
     files: list[CodeFile] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)   # (rel, причина)
-    redacted: list[tuple[str, int]] = field(default_factory=list)  # (rel, число замен)
 
     @property
     def total_bytes(self) -> int:
@@ -73,7 +70,6 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
     log = log or Log(lambda _m: None)
     root = Path(cfg["project_root"]).resolve()
     scan_cfg = cfg["scan"]
-    sec_cfg = cfg["security"]
     max_file_bytes = int(float(scan_cfg.get("max_file_kb", 512)) * 1024)
     exclude_dirs = [d.lower() for d in scan_cfg.get("exclude_dirs", [])]
     reserved = _reserved_dirs(cfg)
@@ -100,15 +96,15 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
             except ValueError:
                 continue
 
-            if _match_any(rel, name, sec_cfg.get("secret_filename_globs", [])):
-                result.skipped.append((rel, "секретное имя файла"))
-                continue
-            if _match_any(rel, name, scan_cfg.get("exclude_globs", [])):
-                result.skipped.append((rel, "исключено по маске"))
-                continue
-            if not _is_code_name(name, scan_cfg):
-                result.skipped.append((rel, "не код (расширение)"))
-                continue
+            # keep_globs сильнее exclude_globs и белого списка расширений
+            forced = _match_any(rel, name, scan_cfg.get("keep_globs", []))
+            if not forced:
+                if _match_any(rel, name, scan_cfg.get("exclude_globs", [])):
+                    result.skipped.append((rel, "исключено по маске"))
+                    continue
+                if not _is_code_name(name, scan_cfg):
+                    result.skipped.append((rel, "не код (расширение)"))
+                    continue
             try:
                 st = path.stat()
             except OSError as exc:
@@ -131,19 +127,11 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
                 result.skipped.append((rel, "это батч CodeShuttle"))
                 continue
 
-            red = redactor.redact(text, sec_cfg, filename=rel)
-            if red.dropped_reason:
-                result.skipped.append((rel, red.dropped_reason))
-                continue
-            if red.findings:
-                result.redacted.append((rel, len(red.findings)))
-
             result.files.append(CodeFile(
                 rel=rel,
-                text=red.text,
-                sha=sha256_text(red.text),
-                size=utf8_len(red.text),
-                redactions=red.findings,
+                text=text,
+                sha=sha256_text(text),
+                size=utf8_len(text),
             ))
 
     result.files.sort(key=lambda f: f.rel)

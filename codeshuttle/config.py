@@ -14,6 +14,7 @@ DEFAULTS: dict[str, Any] = {
     "project_root": "",   # корень проекта: источник для экспорта И цель для импорта
     "export_dir": "",     # куда складывать батчи (outbox)
     "import_dir": "",     # откуда забирать батчи (inbox)
+    "archive_dir": "",    # куда класть .rar с батчами; пусто -> <родитель project_root>/.codeshuttle-archives
     "state_file": "",     # пусто -> <tool>/.state/<hash>.json
 
     # --- размер батча ---
@@ -28,7 +29,7 @@ DEFAULTS: dict[str, Any] = {
             "sh", "bash", "zsh", "ps1", "psm1", "bat", "cmd",
             "sql", "prisma", "graphql", "gql", "proto", "thrift",
             "html", "htm", "css", "scss", "sass", "less", "styl",
-            "json", "jsonc", "toml", "ini", "cfg", "conf", "properties",
+            "json", "jsonc", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties",
             "xml", "xsd", "gradle", "sbt", "cmake", "mk", "make",
             "md", "mdx", "rst", "txt", "tf", "tfvars", "hcl", "lua", "pl", "pm",
             "r", "jl", "ex", "exs", "erl", "clj", "cljs", "elm", "nim", "zig", "asm",
@@ -58,33 +59,15 @@ DEFAULTS: dict[str, Any] = {
             "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.svg", "*.webp", "*.pdf",
             "*.woff", "*.woff2", "*.ttf", "*.eot", "*.mp4", "*.mp3", "*.wav",
             "*.db", "*.sqlite", "*.sqlite3", "*.mdb",
-            # ЯМЛы выгружаются отдельно вручную (см. README)
-            "*.yml", "*.yaml",
+        ],
+        # сильнее exclude_globs и белого списка расширений
+        "keep_globs": [
+            "pom.xml", "*-pom.xml", "build.xml", "ivy.xml",
+            "package.json", "tsconfig*.json", "jsconfig*.json", "composer.json",
+            "pyproject.toml", "Cargo.toml", "setup.cfg", "tox.ini", "MANIFEST.in",
         ],
         "max_file_kb": 512,
         "follow_symlinks": False,
-    },
-
-    "security": {
-        "enabled": True,
-        # файлы, которые не выгружаются никогда (совпадение по имени или пути)
-        "secret_filename_globs": [
-            ".env", ".env.*", "*.env", "env.local", "*.pem", "*.key", "*.pfx", "*.p12",
-            "*.jks", "*.keystore", "*.crt", "*.cer", "*.der", "*.ppk", "*.kdbx", "*.ovpn",
-            "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "*.asc", "*.gpg",
-            ".netrc", "_netrc", ".npmrc", ".pypirc", ".htpasswd", ".dockercfg",
-            "credentials", "credentials.*", "*credentials*", "*secret*", "*secrets*",
-            "*service-account*.json", "*serviceaccount*.json", "*.pfx.json",
-            ".aws/*", ".ssh/*", "*/.aws/*", "*/.ssh/*",
-        ],
-        "redact_patterns": True,       # затирать значения секретов в коде
-        "drop_file_on_critical": True, # выкинуть файл целиком при приватном ключе и т.п.
-        "max_redactions_per_file": 40, # больше -> файл считается секретным и выкидывается
-        "redact_high_entropy": True,
-        "high_entropy_min_len": 40,
-        "redact_emails": False,
-        "redact_ips": False,
-        "extra_patterns": [],          # [{"name": "...", "regex": "...", "group": 0}]
     },
 
     "import": {

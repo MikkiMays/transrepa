@@ -40,7 +40,7 @@ def _write_report(export_dir: Path, pack_id: str, kind: str, scan: ScanResult,
         f"- Батчей: {len(batches)}",
         f"- Файлов в паке: {len(sent)}",
         f"- Удалений в паке: {len(deletes)}",
-        f"- Всего кода в проекте (после очистки): {human_size(scan.total_bytes)} в {len(scan.files)} файлах",
+        f"- Всего файлов для выгрузки: {human_size(scan.total_bytes)} в {len(scan.files)} файлах",
         "",
         "## Батчи",
     ]
@@ -49,20 +49,9 @@ def _write_report(export_dir: Path, pack_id: str, kind: str, scan: ScanResult,
     if deletes:
         lines += ["", "## Удаляемые файлы"] + [f"- `{p}`" for p in deletes]
 
-    if scan.redacted:
-        lines += ["", "## Затёрто секретов (файл — число замен)"]
-        lines += [f"- `{rel}` — {n}" for rel, n in sorted(scan.redacted, key=lambda x: -x[1])]
-
-    dropped = [(r, why) for r, why in scan.skipped
-               if "секрет" in why.lower() or "ключ" in why.lower()]
-    if dropped:
-        lines += ["", "## Файлы, НЕ выгруженные из-за секретов"]
-        lines += [f"- `{rel}` — {why}" for rel, why in dropped]
-
-    other = [(r, why) for r, why in scan.skipped if (r, why) not in dropped]
-    if other:
-        lines += ["", f"## Прочие пропуски ({len(other)})", "", "<details><summary>показать</summary>", ""]
-        lines += [f"- `{rel}` — {why}" for rel, why in other[:2000]]
+    if scan.skipped:
+        lines += ["", f"## Пропущенные файлы ({len(scan.skipped)})", "", "<details><summary>показать</summary>", ""]
+        lines += [f"- `{rel}` — {why}" for rel, why in scan.skipped[:2000]]
         lines += ["", "</details>"]
 
     # отчёт кладём в подпапку: в самом outbox должны лежать ТОЛЬКО батчи,
@@ -97,7 +86,7 @@ def export(cfg: dict, kind: str = "delta", log: Log | None = None,
     scan = scan_project(cfg, log)
     current = scan.as_sha_map()
     log(f"Найдено файлов кода: {len(scan.files)} ({human_size(scan.total_bytes)})")
-    log(f"Пропущено: {len(scan.skipped)}; с затёртыми секретами: {len(scan.redacted)}")
+    log(f"Пропущено по техническим фильтрам: {len(scan.skipped)}")
 
     if kind == "full":
         send = list(scan.files)
@@ -105,11 +94,21 @@ def export(cfg: dict, kind: str = "delta", log: Log | None = None,
         base = "-"
     else:
         added, changed, deleted = st.diff(current)
+        # файл исчез из скана, но лежит на диске -> его отфильтровали (например,
+        # конфиг), а не удалили. Удалением такое не шлём: приёмник потеряет копию
+        filtered = [p for p in deleted if (root / p).exists()]
+        deleted = [p for p in deleted if p not in set(filtered)]
         wanted = set(added) | set(changed)
         send = [f for f in scan.files if f.rel in wanted]
         deletes = deleted
         base = st.tree_hash
         log(f"Новых: {len(added)}, изменённых: {len(changed)}, удалённых: {len(deleted)}")
+        if filtered:
+            log(f"Выпало из синхронизации по фильтрам (на приёмнике не трогаем): {len(filtered)}")
+            for p in filtered[:20]:
+                log(f"  = {p}")
+            if len(filtered) > 20:
+                log(f"  ... ещё {len(filtered) - 20}")
         if not send and not deletes:
             log("Изменений нет — выгружать нечего.")
             return ExportResult(ok=True, kind=kind, message="Изменений нет")
@@ -187,6 +186,9 @@ def status(cfg: dict, log: Log | None = None) -> dict:
     scan = scan_project(cfg, log)
     current = scan.as_sha_map()
     added, changed, deleted = st.diff(current)
+    root = Path(cfg["project_root"]).resolve()
+    filtered = [p for p in deleted if (root / p).exists()]
+    deleted = [p for p in deleted if p not in set(filtered)]
 
     log.section("Статус")
     log(f"Файлов кода сейчас : {len(scan.files)} ({human_size(scan.total_bytes)})")
@@ -202,10 +204,10 @@ def status(cfg: dict, log: Log | None = None) -> dict:
         log(f"  - {p}")
     if len(added) + len(changed) + len(deleted) > 120:
         log("  ...")
-    if scan.redacted:
-        log(f"Файлов с затёртыми секретами: {len(scan.redacted)}")
+    if filtered:
+        log(f"Выпало из синхронизации по фильтрам: {len(filtered)} (файлы на месте, просто больше не возятся)")
     return {"ok": True, "added": added, "changed": changed, "deleted": deleted,
-            "files": len(scan.files), "state": st}
+            "filtered": filtered, "files": len(scan.files), "state": st}
 
 
 def reset_state(cfg: dict, log: Log | None = None) -> bool:

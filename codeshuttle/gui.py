@@ -9,7 +9,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import config as cfgmod
+from . import archiver, config as cfgmod
 from . import exporter, importer
 from .util import Log
 
@@ -95,6 +95,9 @@ class App:
             side="left", expand=True, fill="x", padx=(2, 0))
         ttk.Button(exp, text="Отметить текущее состояние как синхронизированное",
                    command=lambda: self._run(self._baseline)).pack(fill="x", pady=2)
+        self.btn_archive = ttk.Button(exp, text="Выгрузить изменения и упаковать батчи в .rar",
+                                      command=lambda: self._run(self._archive))
+        self.btn_archive.pack(fill="x", pady=2)
 
         imp = ttk.LabelFrame(actions, text="Принять (другая машина)", padding=PAD)
         imp.pack(side="left", fill="x", expand=True, padx=(4, 0))
@@ -179,6 +182,9 @@ class App:
     def _baseline(self, log: Log) -> None:
         exporter.reset_state(self.cfg, log)
 
+    def _archive(self, log: Log) -> None:
+        archiver.archive_module(self.cfg, log=log)
+
     def _import_pick(self) -> None:
         """Спросить папку с батчами и сразу применить её."""
         if self.busy:
@@ -221,7 +227,7 @@ class App:
 
     def _buttons(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
-        for b in (self.btn_full, self.btn_delta, self.btn_import, self.btn_check, self.btn_pick):
+        for b in (self.btn_full, self.btn_delta, self.btn_archive, self.btn_import, self.btn_check, self.btn_pick):
             b.configure(state=state)
 
     def _log_line(self, msg: str) -> None:

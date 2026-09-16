@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import config as cfgmod
+from . import archiver, config as cfgmod
 from . import exporter, importer
 from .util import Log
 
@@ -25,6 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--dry-run", action="store_true", help="проверить без записи")
     i.add_argument("--from", dest="from_dir", default=None,
                    help="папка с батчами (перекрывает import_dir из конфига)")
+
+    a = sub.add_parser("archive", help="выгрузить изменения батчами и упаковать батчи в .rar")
+    a.add_argument("--dry-run", action="store_true", help="показать план без записи")
 
     sub.add_parser("status", help="что изменилось с прошлой синхронизации")
     sub.add_parser("baseline", help="считать текущее состояние синхронизированным")
@@ -67,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "import":
         res = importer.apply_import(cfg, log, dry_run=args.dry_run, import_dir=args.from_dir)
+        return 0 if res.ok else 1
+
+    if args.cmd == "archive":
+        res = archiver.archive_module(cfg, log=log, dry_run=args.dry_run)
         return 0 if res.ok else 1
 
     if args.cmd == "status":

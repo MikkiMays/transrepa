@@ -46,13 +46,17 @@ def make_project(root: Path) -> None:
         "build/ignored.class": "\x00\x01binary",
         "node_modules/lib/index.js": "module.exports = 1;\n",
         "config/app.yaml": "db:\n  password: secret123\n",
+        "src/main/resources/application.properties": "server.port=8080\n",
+        "src/main/resources/logback.xml": "<configuration/>\n",
+        "config/feature-flags.json": "{\"beta\": true}\n",
+        "pom.xml": "<project><artifactId>app</artifactId></project>\n",
     }
     # большой файл (> 45 КБ) -> должен резаться на части
     files["src/big/generated.sql"] = "".join(
         f"INSERT INTO t(id, name) VALUES ({i}, 'строка номер {i}');\n" for i in range(1400))
     # одна гигантская строка без переводов -> hard-split
-    files["src/big/oneline.json"] = '{"data":"' + ("x" * 120_000) + '"}\n'
-    # файл с кредами -> должен быть очищен
+    files["src/big/oneline.txt"] = '{"data":"' + ("x" * 120_000) + '"}\n'
+    # Содержимое передаётся дословно, включая строки, похожие на секреты.
     files["src/app/settings.py"] = (
         "DB_PASSWORD = \"SuperSecret123!\"\n"
         "API_KEY = 'AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q'\n"
@@ -66,6 +70,11 @@ def make_project(root: Path) -> None:
     files["private.pem"] = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----\n"
     files["src/app/keyholder.py"] = (
         "KEY = '''-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKC\n-----END RSA PRIVATE KEY-----'''\n")
+    files["src/main/java/app/LongIdentifiers.java"] = (
+        '@RequestMapping("/motivation-report-processor/v1/report/conversion/available-periods")\n'
+        '@Qualifier("netCommissionIncomeTradeAcqIndicatorCalculator")\n'
+        '@Column(name = "dependent_indicator_info_calculator_name")\n'
+    )
 
     for rel, content in files.items():
         p = root / rel
@@ -128,22 +137,34 @@ def main() -> int:
     oversize = [p.name for p in res.batch_files if p.stat().st_size > limit]
     check(not oversize, f"все батчи <= 45 КБ (нарушителей: {len(oversize)})")
 
-    # ---------------------------------------------------------- 2. безопасность
-    print("\n[2] фильтр кредов")
+    # ---------------------------------------------------------- 2. точность содержимого
+    print("\n[2] содержимое передаётся без очистки и подмен")
     body = "\n".join(p.read_text(encoding="utf-8") for p in res.batch_files)
-    check("SuperSecret123!" not in body, "пароль не попал в выгрузку")
-    check("AKIAIOSFODNN7EXAMPLE" not in body, "AWS-ключ не попал в выгрузку")
-    check("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q" not in body, "google-ключ вычищен")
-    check("hunter2" not in body, "пароль из URL вычищен")
-    check("BEGIN RSA PRIVATE KEY" not in body, "приватный ключ не попал в выгрузку")
-    check("keyholder.py" not in body, "файл с приватным ключом выкинут целиком")
-    check(".env" not in [f for f in res.files_sent], ".env не выгружается")
-    check("private.pem" not in res.files_sent, "*.pem не выгружается")
-    check("config/app.yaml" not in res.files_sent, "yaml исключён (грузится отдельно)")
+    check("SuperSecret123!" in body, "строковый литерал с password не изменён")
+    check("AKIAIOSFODNN7EXAMPLE" in body, "строка формата AWS-ключа не изменена")
+    check("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q" in body,
+          "длинная строка формата API-ключа не изменена")
+    check("postgres://admin:hunter2@db.internal:5432/app" in body,
+          "строка URL с реквизитами не изменена")
+    check("BEGIN RSA PRIVATE KEY" in body, "текстовый блок приватного ключа не вырезан")
+    check("src/app/keyholder.py" in res.files_sent,
+          "файл с текстовым блоком приватного ключа не отфильтрован")
+    check("__REDACTED__" not in body, "CodeShuttle не добавил __REDACTED__")
+    check("netCommissionIncomeTradeAcqIndicatorCalculator" in body,
+          "длинное имя Spring-бина не затёрто")
+    check("dependent_indicator_info_calculator_name" in body,
+          "длинное имя колонки не затёрто")
+    check("/motivation-report-processor/v1/report/conversion/available-periods" in body,
+          "длинный REST-путь не затёрт")
+    check("config/app.yaml" in res.files_sent, "yaml выгружается")
+    check("src/main/resources/application.properties" in res.files_sent,
+          ".properties выгружается")
+    check("src/main/resources/logback.xml" in res.files_sent, "*.xml выгружается")
+    check("config/feature-flags.json" in res.files_sent, "*.json выгружается")
+    check("pom.xml" in res.files_sent, "pom.xml выгружается (keep_globs)")
     check("node_modules/lib/index.js" not in res.files_sent, "node_modules исключён")
     check("build/ignored.class" not in res.files_sent, "бинарники исключены")
     check("timeout = 30" in body, "обычный код не пострадал")
-    check('password = os.environ["DB_PASSWORD"]' in body, "ссылка на переменную не затёрта")
 
     # ---------------------------------------------------------- 3. импорт на B
     print("\n[3] импорт на второй машине")
@@ -166,7 +187,7 @@ def main() -> int:
     check(read(dst, "src/empty.py") == "", "пустой файл восстановлен")
     check("--8<-- BEGIN нечто" in (read(dst, "src/tricky/markers.md") or ""),
           "строки-маркеры внутри кода восстановлены")
-    check(read(dst, "src/big/oneline.json") == read(src, "src/big/oneline.json"),
+    check(read(dst, "src/big/oneline.txt") == read(src, "src/big/oneline.txt"),
           "гигантская однострочная строка склеена верно")
     check(read(dst, "docs/README.md") == read(src, "docs/README.md"), "юникод не пострадал")
     check((dst / "src/deep/a/b/c/d/deep.py").exists(), "глубокая вложенность папок создана")
@@ -211,6 +232,14 @@ def main() -> int:
     print("\n[5] повторный экспорт без изменений")
     res3 = exporter.export(cfg_a, "delta", QUIET)
     check(res3.ok and not res3.batch_files, "нечего выгружать -> пустой результат")
+
+    # -------------------------------------------- 5б. ужесточение фильтров != удаление
+    print("\n[5б] файл, выпавший по новому фильтру, не уезжает удалением")
+    cfg_tight = json.loads(json.dumps(cfg_a))
+    cfg_tight["scan"]["exclude_globs"] = cfg_a["scan"]["exclude_globs"] + ["*.md"]
+    res_tight = exporter.export(cfg_tight, "delta", QUIET, dry_run=True)
+    check("docs/README.md" not in res_tight.deletes,
+          f"README не помечен на удаление после ужесточения масок: {res_tight.deletes}")
 
     print("\n[6] обратное направление: B -> A")
     (dst / "src/app/util.py").write_text("def add(a, b):\n    return a + b + 42\n",
