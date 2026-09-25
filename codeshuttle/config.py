@@ -20,6 +20,15 @@ DEFAULTS: dict[str, Any] = {
     # --- размер батча ---
     "max_batch_kb": 45,
 
+    # --- экспорт одной кнопкой (git -> батчи -> .rar) ---
+    "ship_kind": "full",  # full — весь проект, delta — только изменения
+    "gui_tab": "export",  # какую вкладку окна открыть при запуске
+
+    "git": {
+        "fetch_timeout_sec": 180,  # сколько ждать fetch одной папки
+        "confirm_switch": True,    # окно: спрашивать перед переключением веток
+    },
+
     "scan": {
         "mode": "whitelist",          # whitelist | all
         "extensions": [

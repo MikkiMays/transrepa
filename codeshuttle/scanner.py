@@ -9,6 +9,7 @@ from pathlib import Path
 from .util import Log, decode_source, sha256_text, utf8_len
 
 BATCH_SIGNATURE = "### CODESHUTTLE"
+BRANCH_MARKER = ".codeshuttle-branch.json"   # файл ветки (см. gitsync) — нужен только отправителю
 
 
 @dataclass
@@ -96,6 +97,9 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
             except ValueError:
                 continue
 
+            if name == BRANCH_MARKER:
+                result.skipped.append((rel, "файл ветки CodeShuttle"))
+                continue
             # keep_globs сильнее exclude_globs и белого списка расширений
             forced = _match_any(rel, name, scan_cfg.get("keep_globs", []))
             if not forced:

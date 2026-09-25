@@ -2,8 +2,15 @@
   "project_root": "",
   "export_dir": "",
   "import_dir": "",
+  "archive_dir": "",
   "state_file": "",
   "max_batch_kb": 45,
+  "ship_kind": "full",
+  "gui_tab": "export",
+  "git": {
+    "fetch_timeout_sec": 180,
+    "confirm_switch": true
+  },
   "scan": {
     "mode": "whitelist",
     "extensions": [
