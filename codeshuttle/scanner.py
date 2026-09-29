@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
-from .util import Log, decode_source, sha256_text, utf8_len
+from . import cipher
+from .util import Log, decode_source, fs_path, sha256_text, utf8_len
 
 BATCH_SIGNATURE = "### CODESHUTTLE"
 BRANCH_MARKER = ".codeshuttle-branch.json"   # файл ветки (см. gitsync) — нужен только отправителю
@@ -74,17 +75,22 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
     max_file_bytes = int(float(scan_cfg.get("max_file_kb", 512)) * 1024)
     exclude_dirs = [d.lower() for d in scan_cfg.get("exclude_dirs", [])]
     reserved = _reserved_dirs(cfg)
+    follow = bool(scan_cfg.get("follow_symlinks"))
     result = ScanResult()
 
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=bool(scan_cfg.get("follow_symlinks"))):
-        here = Path(dirpath)
+    # обходим и читаем через fs_path (на Windows \\?\...), чтобы не терять файлы
+    # с путём длиннее 259 символов; rel и сравнения считаем по обычному пути
+    walk_root = fs_path(root)
+    for dirpath, dirnames, filenames in os.walk(walk_root, followlinks=follow):
+        fs_here = Path(dirpath)
+        here = root / fs_here.relative_to(walk_root)
         # обрезаем ветки целиком
         keep = []
         for d in dirnames:
             dl = d.lower()
             if any(fnmatch(dl, pat) for pat in exclude_dirs):
                 continue
-            sub = (here / d).resolve()
+            sub = (here / d).resolve() if follow else here / d
             if any(sub == r or r in sub.parents for r in reserved):
                 continue  # это outbox/inbox самого CodeShuttle
             keep.append(d)
@@ -92,6 +98,7 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
 
         for name in sorted(filenames):
             path = here / name
+            fs_file = fs_here / name
             try:
                 rel = path.relative_to(root).as_posix()
             except ValueError:
@@ -110,7 +117,7 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
                     result.skipped.append((rel, "не код (расширение)"))
                     continue
             try:
-                st = path.stat()
+                st = fs_file.stat()
             except OSError as exc:
                 result.skipped.append((rel, f"нет доступа: {exc.strerror}"))
                 continue
@@ -118,7 +125,7 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
                 result.skipped.append((rel, f"слишком большой ({st.st_size} б)"))
                 continue
             try:
-                raw = path.read_bytes()
+                raw = fs_file.read_bytes()
             except OSError as exc:
                 result.skipped.append((rel, f"ошибка чтения: {exc.strerror}"))
                 continue
@@ -129,6 +136,9 @@ def scan_project(cfg: dict, log: Log | None = None) -> ScanResult:
                 continue
             if text.lstrip().startswith(BATCH_SIGNATURE):
                 result.skipped.append((rel, "это батч CodeShuttle"))
+                continue
+            if cipher.looks_encoded(text):
+                result.skipped.append((rel, "это кодированный батч CodeShuttle"))
                 continue
 
             result.files.append(CodeFile(

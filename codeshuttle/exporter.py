@@ -5,11 +5,12 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import cipher
 from . import config as cfgmod
 from . import packfmt
 from .scanner import ScanResult, scan_project
 from .state import State, state_hash
-from .util import Log, human_size, now_iso, now_stamp
+from .util import Log, fs_path, human_size, now_iso, now_stamp
 
 
 @dataclass
@@ -96,7 +97,7 @@ def export(cfg: dict, kind: str = "delta", log: Log | None = None,
         added, changed, deleted = st.diff(current)
         # файл исчез из скана, но лежит на диске -> его отфильтровали (например,
         # конфиг), а не удалили. Удалением такое не шлём: приёмник потеряет копию
-        filtered = [p for p in deleted if (root / p).exists()]
+        filtered = [p for p in deleted if fs_path(root / p).exists()]
         deleted = [p for p in deleted if p not in set(filtered)]
         wanted = set(added) | set(changed)
         send = [f for f in scan.files if f.rel in wanted]
@@ -116,13 +117,21 @@ def export(cfg: dict, kind: str = "delta", log: Log | None = None,
     result_hash = state_hash(current)
     pack_id = _pack_id(kind)
 
-    content_budget = max_bytes - packfmt.HEADER_RESERVE - packfmt.BLOCK_OVERHEAD
+    encode = cipher.is_enabled(cfg)
+    enc_key = cipher.encode_key(cfg)
+    # base64 раздувает батч на ~1/3 — пакуем plain на 0.72 лимита, чтобы
+    # закодированный .txt остался в пределах max_batch_kb
+    pack_bytes = int(max_bytes * 0.72) if encode else max_bytes
+    if encode:
+        log("Кодирование батчей: включено")
+
+    content_budget = pack_bytes - packfmt.HEADER_RESERVE - packfmt.BLOCK_OVERHEAD
     blocks: list[packfmt.Block] = []
     for f in send:
         blocks.extend(packfmt.build_file_blocks(f.rel, f.text, f.sha, content_budget))
     blocks.extend(packfmt.build_delete_block(p) for p in deletes)
 
-    batched = packfmt.pack_blocks(blocks, max_bytes)
+    batched = packfmt.pack_blocks(blocks, pack_bytes)
     total = len(batched)
     generated = now_iso()
 
@@ -145,6 +154,8 @@ def export(cfg: dict, kind: str = "delta", log: Log | None = None,
         text = packfmt.render_batch(
             group, pack_id=pack_id, kind=kind, index=i, total=total,
             base=base, result=result_hash, generated=generated)
+        if encode:
+            text = cipher.encode(text, enc_key)
         name = f"{pack_id}_{kind}_batch_{i:0{width}d}_of_{total:0{width}d}.txt"
         path = export_dir / name
         path.write_text(text, encoding="utf-8", newline="\n")
@@ -187,7 +198,7 @@ def status(cfg: dict, log: Log | None = None) -> dict:
     current = scan.as_sha_map()
     added, changed, deleted = st.diff(current)
     root = Path(cfg["project_root"]).resolve()
-    filtered = [p for p in deleted if (root / p).exists()]
+    filtered = [p for p in deleted if fs_path(root / p).exists()]
     deleted = [p for p in deleted if p not in set(filtered)]
 
     log.section("Статус")

@@ -16,11 +16,12 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import cipher
 from . import config as cfgmod
 from . import packfmt
 from .scanner import scan_project
 from .state import State, state_hash
-from .util import Log, human_size, is_safe_relpath, sha256_text
+from .util import Log, fs_path, human_size, is_safe_relpath, sha256_text
 
 READABLE_SUFFIXES = (".txt", ".md", ".batch", ".log", ".text", ".dat", "")
 
@@ -65,8 +66,12 @@ class ImportResult:
         return self.created + self.updated
 
 
-def collect_batches(import_dir: Path, log: Log) -> list[packfmt.ParsedBatch]:
-    """Читает все файлы папки и вытаскивает из них батчи (имя файла не важно)."""
+def collect_batches(import_dir: Path, log: Log, keys: list[str] | None = None) -> list[packfmt.ParsedBatch]:
+    """Читает все файлы папки и вытаскивает из них батчи (имя файла не важно).
+
+    Файл, не похожий на plain-батч, пробуем раскодировать (кодированный батч);
+    так в одной папке спокойно лежат старые plain и новые кодированные батчи."""
+    keys = keys or [cipher.DEFAULT_KEY]
     found: list[packfmt.ParsedBatch] = []
     seen_files = 0
     for path in sorted(import_dir.rglob("*")):
@@ -80,7 +85,10 @@ def collect_batches(import_dir: Path, log: Log) -> list[packfmt.ParsedBatch]:
             continue
         seen_files += 1
         if not packfmt.looks_like_batch(text):
-            continue
+            decoded = cipher.decode(text, keys)
+            if decoded is None or not packfmt.looks_like_batch(decoded):
+                continue
+            text = decoded
         parsed = packfmt.parse_text(text, source=str(path))
         if parsed:
             log(f"  {path.name}: батчей {len(parsed)}")
@@ -215,7 +223,7 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
     log(f"Источник батчей: {inbox}")
     log(f"Цель           : {root}")
 
-    batches = collect_batches(inbox, log)
+    batches = collect_batches(inbox, log, cipher.resolve_keys(cfg_view))
     if not batches:
         log("Батчей не найдено. Положи файлы выгрузки в эту папку.")
         return ImportResult(ok=False, message="Батчи не найдены")
@@ -251,7 +259,7 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
                 f"здесь сейчас {st.tree_hash}; применяю по факту содержимого")
 
         for rel in sorted(plan.files):
-            target = root / rel
+            target = fs_path(root / rel)
             new_text = plan.files[rel]
 
             if rel in written_by and written_by[rel] != plan.pack_id:
@@ -282,7 +290,7 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
                 log(f"   удаления ({len(plan.deletes)}) пропущены: пак неполный")
             else:
                 for rel in plan.deletes:
-                    target = root / rel
+                    target = fs_path(root / rel)
                     if not target.exists():
                         continue
                     if not dry_run:
@@ -296,7 +304,7 @@ def apply_import(cfg: dict, log: Log | None = None, dry_run: bool = False,
             for f in scan_project(cfg_view, Log(lambda _m: None)).files:
                 if f.rel in known:
                     continue
-                target = root / f.rel
+                target = fs_path(root / f.rel)
                 if not dry_run and target.exists():
                     target.unlink()
                 result.deleted.append(f.rel)

@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import ntpath
+import os
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
 UTF8_BOM = "\ufeff"
+LONG_PATH_PREFIX = "\\\\?\\"
 
 
 def utf8_len(s: str) -> int:
@@ -53,6 +56,29 @@ def human_size(n: int) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024.0
     return f"{n} B"
+
+
+def fs_path(path: Path | str) -> Path:
+    """Путь, по которому обращаться к файлу проекта на диске.
+
+    Windows без включённых длинных путей (LongPathsEnabled) не открывает файлы,
+    у которых полный путь длиннее 259 символов: stat()/open() падают. Из-за этого
+    сканер пропускал такие файлы как «нет доступа», а импорт не смог бы их записать.
+    Префикс \\\\?\\ снимает ограничение без прав администратора. На Linux/macOS
+    путь не меняется."""
+    if os.name != "nt":
+        return Path(path)
+    return Path(nt_long_path(str(path)))
+
+
+def nt_long_path(path: str) -> str:
+    """C:\\x -> \\\\?\\C:\\x, \\\\server\\share -> \\\\?\\UNC\\server\\share (уже с префиксом — как есть)."""
+    if path.startswith(LONG_PATH_PREFIX):
+        return path
+    full = ntpath.abspath(path)
+    if full.startswith("\\\\"):
+        return LONG_PATH_PREFIX + "UNC\\" + full[2:]
+    return LONG_PATH_PREFIX + full
 
 
 def rel_posix(root: Path, path: Path) -> str:

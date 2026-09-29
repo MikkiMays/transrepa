@@ -79,6 +79,11 @@ DEFAULTS: dict[str, Any] = {
         "follow_symlinks": False,
     },
 
+    "cipher": {
+        "enabled": True,   # кодировать батчи при экспорте (импорт читает и кодированные, и старые plain)
+        "key": "",         # пусто -> встроенный ключ; свой ключ задаётся на ОБЕИХ машинах
+    },
+
     "import": {
         "apply_deletes": True,   # применять DELETE-блоки из дельты
         "move_applied": True,    # переносить применённые батчи в import_dir/_applied/<pack>
